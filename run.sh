@@ -2,6 +2,7 @@
 
 # run.sh
 
-python extract_csv_files.py
-python prepare_features.py
+python prep.py
 python train.py
+
+

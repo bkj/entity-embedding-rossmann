@@ -4,6 +4,8 @@
     train.py
 """
 
+from __future__ import print_function, division
+
 import sys
 import pickle
 import argparse
@@ -12,9 +14,8 @@ from collections import OrderedDict
 
 np.random.seed(123)
 from keras import backend as K
-from keras.models import Sequential
-from keras.layers.embeddings import Embedding
-from keras.layers.core import Dense, Merge, Flatten
+from keras.models import Sequential, Model
+from keras.layers import Concatenate, Input, Dense, Flatten, Embedding
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -69,29 +70,33 @@ class Net(object):
     def _init_model(self):
         
         # Dense layers
-        dense_legs = []
+        inputs = []
+        legs   = []
         for _ in range(self.num_dense):
-            tmp = Sequential()
-            tmp.add(Dense(1, input_dim=1))
-            dense_legs.append(tmp)
+            dense_inp = Input(shape=(1, ))
+            dense_out = Dense(1)(dense_inp)
+            inputs.append(dense_inp)
+            legs.append(dense_out)
         
         # Categorical layers
         emb_legs = []
         for _, (input_dim, output_dim) in self.layer_dims.items():
-            leg = Sequential()
-            leg.add(Embedding(input_dim, output_dim, input_length=1))
-            leg.add(Flatten())
-            emb_legs.append(leg)
+            emb_inp = Input(shape=(1, ))
+            emb_out = Embedding(input_dim, output_dim)(emb_inp)
+            emb_out = Flatten()(emb_out)
+            inputs.append(emb_inp)
+            legs.append(emb_out)
         
-        self.model = Sequential()
-        self.model.add(Merge(dense_legs + emb_legs, mode='concat'))
-        self.model.add(Dense(1000, activation='relu'))
-        self.model.add(Dense(500, activation='relu'))
-        self.model.add(Dense(1, activation='sigmoid'))
+        x = Concatenate()(legs)
+        x = Dense(1000, activation='relu')(x)
+        x = Dense(500, activation='relu')(x)
+        x = Dense(1, activation='sigmoid')(x)
         
+        self.model = Model(inputs=inputs, outputs=x)
         self.model.compile(loss=self.loss, optimizer='adam')
     
     def loss(self, y_true, y_pred):
+        """ explicitly optimize the loss metric """
         y_true = K.exp(y_true * self.max_log_y)
         y_pred = K.exp(y_pred * self.max_log_y)
         return K.mean(K.abs((y_true - y_pred) / y_true))
@@ -109,7 +114,7 @@ class Net(object):
                 self._split_columns(X_val),
                 self._to_internal(y_val)
             ),
-            nb_epoch=self.epochs,
+            epochs=self.epochs,
             batch_size=self.batch_size,
         )
     
@@ -126,26 +131,29 @@ def sample(X, y, n):
     indices = np.random.randint(num_row, size=n)
     return X[indices, :], y[indices]
 
+
 if __name__ == "__main__":
     args = parse_args()
     
     # --
     # IO
     
-    X, y = pickle.load(open('./data/feature_train_data.pickle', 'rb'))
+    X_train = np.load('./data/X_train.npy')
+    y_train = np.load('./data/y_train.npy')
+    
     
     # --
     # Train/test split
     
-    train_size = int(args.train_size * len(X))
-    X_train, y_train = X[:train_size], y[:train_size]
-    X_val, y_val     = X[train_size:], y[train_size:]
+    train_size = int(args.train_size * len(X_train))
+    X_val, y_val     = X_train[train_size:], y_train[train_size:]
+    X_train, y_train = X_train[:train_size], y_train[:train_size]
     
     if args.train_sample:
         X_train, y_train = sample(X_train, y_train, args.train_sample)
     
     # --
-    # Train -- ensembling gives better results
+    # Train -- ensembling would give better results
     
     model = Net(
         X_train, y_train,
